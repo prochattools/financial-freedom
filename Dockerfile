@@ -11,13 +11,15 @@ RUN npm run build
 
 
 # ===========================
-# Stage 2: Vendor dependencies (Composer)
+# Stage 2: Vendor dependencies (Composer, PHP 8.3)
 # ===========================
-FROM composer:2 AS vendor
+FROM composer:2.6-php8.3 AS vendor
 
 WORKDIR /app
 COPY composer.json composer.lock ./
 RUN composer install --no-dev --no-scripts --no-interaction --prefer-dist
+COPY . .
+RUN composer install --no-dev --optimize-autoloader --no-interaction
 
 
 # ===========================
@@ -32,13 +34,13 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /var/www/html
 
-# Copy application code and build assets
+# Copy application code and build artifacts
 COPY . .
 COPY --from=vendor /app/vendor ./vendor
 COPY --from=frontend /app/public/js ./public/js
 COPY --from=frontend /app/public/css ./public/css
 
-# Laravel optimizations (clear caches on build)
+# Laravel optimizations
 RUN php artisan config:clear && php artisan cache:clear && php artisan route:clear
 
 CMD ["php-fpm"]
