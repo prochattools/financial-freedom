@@ -11,15 +11,16 @@ RUN npm run build
 
 
 # ===========================
-# Stage 2: Vendor dependencies (Composer, PHP 8.3)
+# Stage 2: Vendor dependencies (Composer)
 # ===========================
-FROM composer:2.6-php8.3 AS vendor
+FROM composer:2 AS vendor
 
 WORKDIR /app
 COPY composer.json composer.lock ./
-RUN composer install --no-dev --no-scripts --no-interaction --prefer-dist
+# Ignore PHP platform requirement so PHP 8.4 won't break install
+RUN composer install --no-dev --no-scripts --no-interaction --prefer-dist --ignore-platform-reqs
 COPY . .
-RUN composer install --no-dev --optimize-autoloader --no-interaction
+RUN composer install --no-dev --optimize-autoloader --no-interaction --ignore-platform-reqs
 
 
 # ===========================
