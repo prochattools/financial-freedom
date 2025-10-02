@@ -1,49 +1,55 @@
-# ===========================
-# Stage 1: Frontend deps (Node.js)
-# ===========================
+# =======================
+# Stage 1: Frontend (Node)
+# =======================
 FROM node:20 AS frontend
 
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
+COPY . .
+RUN npm run build || echo "⚠️ Frontend build failed, continuing..."
 
-# ===========================
-# Stage 2: Vendor dependencies (Composer)
-# ===========================
+# =========================
+# Stage 2: Vendor (Composer)
+# =========================
 FROM composer:2 AS vendor
 
 WORKDIR /app
 COPY composer.json composer.lock ./
 RUN composer install --no-dev --no-scripts --no-interaction --prefer-dist --ignore-platform-reqs
 COPY . .
-
-# 🔧 Fix broken .env APP_NAME
-RUN sed -i 's/^APP_NAME=.*/APP_NAME="Financial Freedom"/' .env || true
-
 RUN composer install --no-dev --optimize-autoloader --no-interaction --ignore-platform-reqs
 
-# ===========================
-# Stage 3: Backend runtime (Laravel + PHP + Frontend build)
-# ===========================
+# =================================
+# Stage 3: Backend (Nginx + PHP-FPM)
+# =================================
 FROM php:8.3-fpm AS backend
+
+# Install system deps
+RUN apt-get update && apt-get install -y \
+    git unzip libpq-dev libonig-dev libzip-dev \
+    nginx curl supervisor \
+    && docker-php-ext-install pdo pdo_mysql pdo_pgsql zip \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install PHP extensions
-RUN apt-get update && apt-get install -y \
-    git unzip libpq-dev libonig-dev libzip-dev \
-    && docker-php-ext-install pdo pdo_mysql pdo_pgsql zip
-
-# Copy backend/vendor code
+# Copy app from vendor stage
 COPY --from=vendor /app /app
 
-# Build frontend *after* vendor exists
-COPY --from=frontend /app/node_modules /app/node_modules
-RUN npm run build || (echo "⚠️ Frontend build failed, continuing without JS build" && exit 0)
+# Copy frontend build assets
+COPY --from=frontend /app/public /app/public
 
-# Laravel storage & cache dirs
+# Configure Nginx
+COPY docker/nginx.conf /etc/nginx/nginx.conf
+
+# Configure Supervisor to run Nginx + PHP-FPM together
+COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Set permissions for Laravel
 RUN mkdir -p /app/storage/framework/{sessions,views,cache} \
     && chown -R www-data:www-data /app/storage /app/bootstrap/cache
 
-EXPOSE 9000
-CMD ["php-fpm"]
+EXPOSE 80
+
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
