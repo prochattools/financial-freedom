@@ -1,26 +1,29 @@
 # ===========================
-# Stage 1: Frontend (Vite + Node)
+# Stage 1: Vendor dependencies (Composer)
+# ===========================
+FROM composer:2 AS vendor
+
+WORKDIR /app
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --no-scripts --no-interaction --prefer-dist --ignore-platform-reqs
+COPY . .
+RUN composer install --no-dev --optimize-autoloader --no-interaction --ignore-platform-reqs
+
+
+# ===========================
+# Stage 2: Frontend build (Node + Ziggy requires vendor)
 # ===========================
 FROM node:20 AS frontend
 
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
+
+# Copy source code AND vendor from previous stage so Ziggy works
 COPY . .
+COPY --from=vendor /app/vendor ./vendor
+
 RUN npm run build
-
-
-# ===========================
-# Stage 2: Vendor dependencies (Composer)
-# ===========================
-FROM composer:2 AS vendor
-
-WORKDIR /app
-COPY composer.json composer.lock ./
-# Ignore PHP platform requirement so PHP 8.4 won't break install
-RUN composer install --no-dev --no-scripts --no-interaction --prefer-dist --ignore-platform-reqs
-COPY . .
-RUN composer install --no-dev --optimize-autoloader --no-interaction --ignore-platform-reqs
 
 
 # ===========================
@@ -35,7 +38,7 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /var/www/html
 
-# Copy application code and build artifacts
+# Copy application code, vendor, and built frontend assets
 COPY . .
 COPY --from=vendor /app/vendor ./vendor
 COPY --from=frontend /app/public/js ./public/js
