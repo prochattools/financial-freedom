@@ -1,35 +1,19 @@
-version: "3.9"
+version: "3.8"
 
 services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: financialfreedom-app
-    container_name: financialfreedom
-    restart: unless-stopped
+  financialfreedom:
+    image: finance-financialfreedom-x7vpmh:latest
+    restart: always
+    env_file:
+      - .env
+    command: ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
     ports:
-      - "80"  # Expose internal app to traefik/dokploy
-    environment:
-      APP_ENV: production
-      APP_DEBUG: "false"
-      APP_KEY: ${APP_KEY}
-      APP_URL: https://finance.prochat.tools
-      DB_CONNECTION: mysql
-      DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT:-3306}
-      DB_DATABASE: ${DB_DATABASE}
-      DB_USERNAME: ${DB_USERNAME}
-      DB_PASSWORD: ${DB_PASSWORD}
+      - "8081:80" # expose internal port 80 → host 8081 (Traefik will route)
     volumes:
-      - storage-data:/app/storage
-      - cache-data:/app/bootstrap/cache
+      - ./storage:/app/storage
+      - ./bootstrap/cache:/app/bootstrap/cache
     networks:
       - dokploy
-
-volumes:
-  storage-data:
-  cache-data:
 
 networks:
   dokploy:
