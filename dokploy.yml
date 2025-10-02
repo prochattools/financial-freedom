@@ -1,20 +1,22 @@
-version: "3.8"
+version: "3.9"
 
 services:
-  financialfreedom:
+  finance-financialfreedom:
     image: finance-financialfreedom-x7vpmh:latest
     restart: always
-    env_file:
-      - .env
-    command: ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
-    ports:
-      - "8081:80" # expose internal port 80 → host 8081 (Traefik will route)
-    volumes:
-      - ./storage:/app/storage
-      - ./bootstrap/cache:/app/bootstrap/cache
     networks:
-      - dokploy
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+
+      # Router (domain)
+      - "traefik.http.routers.financialfreedom.rule=Host(`finance.prochat.tools`)"
+      - "traefik.http.routers.financialfreedom.entrypoints=websecure"
+      - "traefik.http.routers.financialfreedom.tls.certresolver=letsencrypt"
+
+      # Service (tell Traefik which port inside the container to use)
+      - "traefik.http.services.financialfreedom.loadbalancer.server.port=80"
 
 networks:
-  dokploy:
+  dokploy-network:
     external: true
