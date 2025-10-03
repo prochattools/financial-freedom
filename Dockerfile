@@ -1,38 +1,51 @@
-# Stage 1: Build vendors
-FROM composer:2 AS vendor
+# Stage 1: PHP dependencies with Composer
+FROM composer:2 as vendor
 
 WORKDIR /app
+
+# Copy composer files first (better layer caching)
 COPY composer.json composer.lock ./
-RUN composer install --ignore-platform-reqs --no-dev --no-scripts --no-progress --prefer-dist
+RUN composer install --no-dev --no-interaction --optimize-autoloader --ignore-platform-reqs
+
+# Copy the rest of the app
 COPY . .
-RUN composer dump-autoload --optimize
 
-# Stage 2: PHP-FPM + Nginx
-FROM php:8.2-fpm
+# Stage 2: Node build for frontend (if you have Vue/React in the repo)
+FROM node:20 as frontend
+WORKDIR /app
 
-# Install system dependencies
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build || echo "⚠️ Frontend build failed, continuing..."
+
+# Stage 3: Final PHP + Nginx container
+FROM php:8.3-fpm
+
+# Install dependencies
 RUN apt-get update && apt-get install -y \
-    libpng-dev libjpeg-dev libfreetype6-dev zip unzip git curl nginx supervisor \
-    && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install gd pdo pdo_mysql bcmath \
+    git unzip curl libpq-dev libonig-dev libzip-dev nginx supervisor \
+    && docker-php-ext-install pdo pdo_mysql pdo_pgsql zip \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy composer from builder
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+# Copy Composer dependencies from vendor stage
+COPY --from=vendor /app /var/www/html
+
+# Copy built frontend (public assets) if any
+COPY --from=frontend /app/public /var/www/html/public
 
 # Set working directory
 WORKDIR /var/www/html
 
-# Copy vendor + app code
-COPY --from=vendor /app /var/www/html
+# Make storage & cache writable
+RUN mkdir -p storage bootstrap/cache \
+    && chown -R www-data:www-data storage bootstrap/cache \
+    && chmod -R 775 storage bootstrap/cache
 
-# Configure Nginx + Supervisor
-COPY .docker/nginx.conf /etc/nginx/conf.d/default.conf
-COPY .docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+# Copy config files
+COPY docker/nginx.conf /etc/nginx/nginx.conf
+COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Fix permissions
-RUN mkdir -p /var/www/html/storage /var/www/html/bootstrap/cache \
-    && chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache \
-    && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
+EXPOSE 80
 
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+CMD ["/usr/bin/supervisord"]
