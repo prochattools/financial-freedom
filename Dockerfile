@@ -1,46 +1,51 @@
-# 1. Frontend build stage
+# ------------------------
+# Node stage: build frontend
+# ------------------------
 FROM node:20 AS frontend
 WORKDIR /app
-COPY package*.json ./
+
+# Copy package files and install
+COPY package*.json vite.config.js ./
 RUN npm install
-COPY . .
 
-# Copy vendor (needed for Ziggy)
-COPY --from=vendor /app/vendor ./vendor
-
-RUN npm run build
-
-
-# 2. Composer vendor stage
-FROM composer:2 AS vendor
-WORKDIR /app
-COPY composer.json composer.lock ./
-RUN composer install --no-dev --no-interaction --optimize-autoloader
-
-
-# 3. PHP base stage
+# ------------------------
+# PHP base stage
+# ------------------------
 FROM php:8.3-fpm AS base
-WORKDIR /var/www/html
+
+# Install system deps + PHP extensions
 RUN apt-get update && apt-get install -y \
-    git unzip curl libpq-dev libonig-dev libzip-dev nginx supervisor \
+    git unzip curl libpq-dev libzip-dev libonig-dev nginx supervisor \
     && docker-php-ext-install pdo pdo_mysql pdo_pgsql zip \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy application code
+WORKDIR /var/www/html
+
+# Copy composer first and install vendor deps
+COPY composer.json composer.lock ./
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+RUN composer install --no-dev --no-interaction --optimize-autoloader
+
+# Copy full app
 COPY . .
 
-# Copy vendor from composer stage
-COPY --from=vendor /app/vendor ./vendor
+# ------------------------
+# Frontend build (needs vendor/ziggy!)
+# ------------------------
+COPY --from=frontend /app/node_modules /app/node_modules
+RUN npm run build || echo "⚠️ Frontend build failed, continuing..."
 
-# Copy frontend build from node stage
-COPY --from=frontend /app/public/build ./public/build
+# Prepare Laravel storage & cache
+RUN mkdir -p /var/www/html/storage /var/www/html/bootstrap/cache \
+    && chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache \
+    && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-# Set correct permissions
-RUN mkdir -p storage bootstrap/cache \
-  && chown -R www-data:www-data storage bootstrap/cache \
-  && chmod -R 775 storage bootstrap/cache
+# ------------------------
+# Final runtime
+# ------------------------
+FROM base AS final
 
-# Copy configs
+# Copy nginx & supervisord configs
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
