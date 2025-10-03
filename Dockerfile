@@ -1,56 +1,46 @@
-# =========================================
-# Frontend build (Vite + Node)
-# =========================================
-FROM node:20 AS frontend
+# Stage 1: PHP dependencies
+FROM composer:2 as phpdeps
 WORKDIR /app
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --no-interaction --prefer-dist
+COPY . ./
+RUN composer dump-autoload --optimize
 
+# Stage 2: Node frontend build
+FROM node:20 as frontend
+WORKDIR /app
 COPY package*.json vite.config.js ./
 COPY resources ./resources
 COPY public ./public
-
+COPY --from=phpdeps /app/vendor ./vendor
 RUN npm ci || npm install
 RUN npm run build
 
-# =========================================
-# PHP dependencies (Composer install)
-# =========================================
-FROM php:8.3-fpm AS phpdeps
-WORKDIR /app
+# Stage 3: Runtime (PHP + Nginx)
+FROM php:8.3-fpm
 
-# Needed system libs for PHP extensions + composer
+# Install required packages
 RUN apt-get update && apt-get install -y \
-    git unzip libzip-dev curl \
- && rm -rf /var/lib/apt/lists/*
-
-# Install composer
-RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
-
-COPY . ./
-RUN composer install --no-dev --no-interaction --optimize-autoloader
-
-# =========================================
-# Runtime (Nginx + PHP-FPM + Supervisor)
-# =========================================
-FROM php:8.3-fpm AS runtime
-WORKDIR /var/www/html
-
-# OS packages + PHP extensions
-RUN apt-get update && apt-get install -y \
-    nginx supervisor curl libzip-dev unzip git \
- && docker-php-ext-configure zip \
+    nginx supervisor curl unzip git libzip-dev \
  && docker-php-ext-install pdo pdo_mysql zip \
  && rm -rf /var/lib/apt/lists/*
 
-# Copy app code
+# Workdir
+WORKDIR /var/www/html
+
+# Copy Laravel + vendor
 COPY --from=phpdeps /app ./
+# Copy frontend build
 COPY --from=frontend /app/public/build ./public/build
 
-# Nginx config
-COPY deploy/docker/nginx.conf /etc/nginx/nginx.conf
-COPY deploy/docker/default.conf /etc/nginx/sites-enabled/default
+# Configure Nginx
+COPY ./docker/nginx.conf /etc/nginx/nginx.conf
+COPY ./docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Supervisor config (to run PHP-FPM + Nginx together)
-COPY deploy/docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+# Fix permissions
+RUN mkdir -p /var/www/html/storage /var/www/html/bootstrap/cache \
+ && chown -R www-data:www-data /var/www/html \
+ && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
 EXPOSE 80
-CMD ["supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
