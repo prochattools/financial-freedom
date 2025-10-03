@@ -1,17 +1,23 @@
 # ------------------------
-# Node stage: build frontend
+# Frontend build stage
 # ------------------------
 FROM node:20 AS frontend
 WORKDIR /app
 
-# Copy package files and install
+# Copy package files & install dependencies
 COPY package*.json vite.config.js ./
 RUN npm install
 
+# Copy the rest of the code (needed for ziggy imports)
+COPY . .
+
+# Build assets
+RUN npm run build
+
 # ------------------------
-# PHP base stage
+# PHP + Composer build stage
 # ------------------------
-FROM php:8.3-fpm AS base
+FROM php:8.3-fpm AS backend
 
 # Install system deps + PHP extensions
 RUN apt-get update && apt-get install -y \
@@ -21,21 +27,16 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /var/www/html
 
-# Copy composer first and install vendor deps
-COPY composer.json composer.lock ./
-RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
-RUN composer install --no-dev --no-interaction --optimize-autoloader
-
-# Copy full app
+# Copy full app code (artisan included)
 COPY . .
 
-# ------------------------
-# Frontend build (needs vendor/ziggy!)
-# ------------------------
-COPY --from=frontend /app/node_modules /app/node_modules
-RUN npm run build || echo "⚠️ Frontend build failed, continuing..."
+# Install composer
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 
-# Prepare Laravel storage & cache
+# Install PHP dependencies
+RUN composer install --no-dev --no-interaction --optimize-autoloader
+
+# Prepare Laravel dirs
 RUN mkdir -p /var/www/html/storage /var/www/html/bootstrap/cache \
     && chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache \
     && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
@@ -43,7 +44,10 @@ RUN mkdir -p /var/www/html/storage /var/www/html/bootstrap/cache \
 # ------------------------
 # Final runtime
 # ------------------------
-FROM base AS final
+FROM backend AS final
+
+# Copy frontend build into public/
+COPY --from=frontend /app/public/build /var/www/html/public/build
 
 # Copy nginx & supervisord configs
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
