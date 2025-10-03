@@ -1,57 +1,62 @@
-# ------------------------
-# Frontend build stage
-# ------------------------
+# ─────────── Frontend build (needs vendor for Ziggy) ───────────
+FROM php:8.3-fpm AS phpdeps
+WORKDIR /app
+
+# OS deps for Composer
+RUN apt-get update && apt-get install -y \
+    git unzip libzip-dev libonig-dev \
+ && docker-php-ext-install pdo pdo_mysql zip \
+ && rm -rf /var/lib/apt/lists/*
+
+# Install Composer
+RUN curl -sS https://getcomposer.org/installer \
+  | php -- --install-dir=/usr/local/bin --filename=composer
+
+# Bring in full app BEFORE composer so artisan exists
+COPY . ./
+
+# Install PHP deps without dev (artisan available now)
+RUN composer install --no-dev --no-interaction --optimize-autoloader
+
+# ─────────── Vite build ───────────
 FROM node:20 AS frontend
 WORKDIR /app
 
-# Copy package files & install dependencies
+# Copy only what Vite needs + vendor (for Ziggy import)
 COPY package*.json vite.config.js ./
-RUN npm install
+COPY resources ./resources
+COPY public ./public
+COPY --from=phpdeps /app/vendor ./vendor
 
-# Copy the rest of the code (needed for ziggy imports)
-COPY . .
-
-# Build assets
+# Build static assets
+RUN npm ci || npm install
 RUN npm run build
 
-# ------------------------
-# PHP + Composer build stage
-# ------------------------
-FROM php:8.3-fpm AS backend
-
-# Install system deps + PHP extensions
-RUN apt-get update && apt-get install -y \
-    git unzip curl libpq-dev libzip-dev libonig-dev nginx supervisor \
-    && docker-php-ext-install pdo pdo_mysql pdo_pgsql zip \
-    && rm -rf /var/lib/apt/lists/*
-
+# ─────────── Final runtime (nginx + php-fpm) ───────────
+FROM php:8.3-fpm AS runtime
 WORKDIR /var/www/html
 
-# Copy full app code (artisan included)
-COPY . .
+# OS + nginx + supervisor
+RUN apt-get update && apt-get install -y \
+    nginx supervisor curl \
+ && docker-php-ext-install pdo pdo_mysql zip \
+ && rm -rf /var/lib/apt/lists/*
 
-# Install composer
-RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+# Copy full app and composer vendor
+COPY . ./
+COPY --from=phpdeps /app/vendor ./vendor
 
-# Install PHP dependencies
-RUN composer install --no-dev --no-interaction --optimize-autoloader
+# Copy built assets
+COPY --from=frontend /app/public/build ./public/build
 
-# Prepare Laravel dirs
-RUN mkdir -p /var/www/html/storage /var/www/html/bootstrap/cache \
-    && chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache \
-    && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
+# Make storage/cache writable
+RUN mkdir -p storage bootstrap/cache \
+ && chown -R www-data:www-data storage bootstrap/cache \
+ && chmod -R 775 storage bootstrap/cache
 
-# ------------------------
-# Final runtime
-# ------------------------
-FROM backend AS final
-
-# Copy frontend build into public/
-COPY --from=frontend /app/public/build /var/www/html/public/build
-
-# Copy nginx & supervisord configs
+# nginx + supervisor configs
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 EXPOSE 80
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+CMD ["/usr/bin/supervisord","-n","-c","/etc/supervisor/conf.d/supervisord.conf"]
