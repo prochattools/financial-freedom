@@ -2,22 +2,16 @@ version: "3.9"
 
 services:
   financialfreedom:
-    image: finance-financialfreedom-x7vpmh:latest
-    container_name: financialfreedom
+    build: .
+    image: financialfreedom:latest
     restart: unless-stopped
     networks:
       - dokploy-network
     labels:
       - "traefik.enable=true"
-
-      # Router (HTTP only, no TLS because Cloudflare tunnel)
       - "traefik.http.routers.financialfreedom.rule=Host(`finance.prochat.tools`)"
       - "traefik.http.routers.financialfreedom.entrypoints=web"
-
-      # Service → app listens on port 80 inside the container
       - "traefik.http.services.financialfreedom.loadbalancer.server.port=80"
-
-      # Tell Traefik which network to use
       - "traefik.docker.network=dokploy-network"
 
 networks:
