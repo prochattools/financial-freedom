@@ -10,14 +10,14 @@ services:
     labels:
       - "traefik.enable=true"
 
-      # Router (only HTTP, no TLS since Cloudflare terminates SSL)
+      # Router (HTTP only, no TLS - Cloudflare handles SSL)
       - "traefik.http.routers.financialfreedom.rule=Host(`finance.prochat.tools`)"
       - "traefik.http.routers.financialfreedom.entrypoints=web"
 
-      # Service → container’s nginx port
+      # Service → app listens on port 80 (nginx/php-fpm in your container)
       - "traefik.http.services.financialfreedom.loadbalancer.server.port=80"
 
-      # Important: tell Traefik which network to use
+      # Make sure Traefik knows which network to use
       - "traefik.docker.network=dokploy-network"
 
 networks:
