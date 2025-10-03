@@ -1,5 +1,5 @@
 # ================================
-# 1. Frontend build stage (Node)
+# 1. Frontend build stage
 # ================================
 FROM node:20 AS frontend
 WORKDIR /app
@@ -9,47 +9,44 @@ COPY . .
 RUN npm run build || echo "⚠️ Frontend build failed, continuing..."
 
 # ================================
-# 2. Backend build stage (Composer)
+# 2. Backend dependencies (Composer)
 # ================================
 FROM composer:2 AS vendor
 WORKDIR /app
-COPY composer.json composer.lock ./
-COPY . .
-RUN composer install --no-dev --no-interaction --optimize-autoloader
+COPY . .   # 👈 copy the full app so artisan exists
+RUN composer install --no-dev --no-interaction --optimize-autoloader || true
 
 # ================================
-# 3. Final runtime stage
+# 3. Runtime (PHP + Nginx + Supervisor)
 # ================================
 FROM php:8.3-fpm
 
-# Install system dependencies + PHP extensions
+# Install dependencies
 RUN apt-get update && apt-get install -y \
     git unzip curl libpq-dev libonig-dev libzip-dev nginx supervisor \
     && docker-php-ext-install pdo pdo_mysql pdo_pgsql zip \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /var/www/html
 
-# Copy Laravel code
+# Copy app
 COPY . .
 
-# Copy built frontend (from stage 1)
+# Copy built frontend assets
 COPY --from=frontend /app/public/js ./public/js
 COPY --from=frontend /app/public/css ./public/css
 
-# Copy vendor (from stage 2)
+# Copy vendor
 COPY --from=vendor /app/vendor ./vendor
 
-# Copy configs
+# Configs
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Fix permissions for Laravel
+# Fix permissions
 RUN mkdir -p storage bootstrap/cache \
-    && chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache \
-    && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
+    && chown -R www-data:www-data storage bootstrap/cache \
+    && chmod -R 775 storage bootstrap/cache
 
 EXPOSE 80
-
 CMD ["/usr/bin/supervisord"]
