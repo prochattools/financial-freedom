@@ -1,47 +1,55 @@
-# Stage 1: Build frontend
-FROM node:20 as frontend
+# ================================
+# 1. Frontend build stage (Node)
+# ================================
+FROM node:20 AS frontend
 WORKDIR /app
-
-# Install frontend deps
 COPY package*.json ./
 RUN npm install
-
-# Copy frontend source & build
 COPY . .
 RUN npm run build || echo "⚠️ Frontend build failed, continuing..."
 
-# Stage 2: PHP vendor dependencies
-FROM composer:2 as vendor
+# ================================
+# 2. Backend build stage (Composer)
+# ================================
+FROM composer:2 AS vendor
 WORKDIR /app
-
-# Copy full Laravel source code FIRST (artisan must exist before composer runs)
+COPY composer.json composer.lock ./
 COPY . .
-RUN composer install --no-dev --no-interaction --optimize-autoloader --ignore-platform-reqs
+RUN composer install --no-dev --no-interaction --optimize-autoloader
 
-# Stage 3: Final runtime image
-FROM php:8.3-fpm as app
-WORKDIR /var/www/html
+# ================================
+# 3. Final runtime stage
+# ================================
+FROM php:8.3-fpm
 
-# Install system dependencies
+# Install system dependencies + PHP extensions
 RUN apt-get update && apt-get install -y \
     git unzip curl libpq-dev libonig-dev libzip-dev nginx supervisor \
     && docker-php-ext-install pdo pdo_mysql pdo_pgsql zip \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy application code & dependencies
-COPY --from=vendor /app /var/www/html
+# Set working directory
+WORKDIR /var/www/html
 
-# Copy built frontend
-COPY --from=frontend /app/public /var/www/html/public
+# Copy Laravel code
+COPY . .
 
-# Fix permissions
-RUN mkdir -p /var/www/html/storage /var/www/html/bootstrap/cache \
+# Copy built frontend (from stage 1)
+COPY --from=frontend /app/public/js ./public/js
+COPY --from=frontend /app/public/css ./public/css
+
+# Copy vendor (from stage 2)
+COPY --from=vendor /app/vendor ./vendor
+
+# Copy configs
+COPY docker/nginx.conf /etc/nginx/nginx.conf
+COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Fix permissions for Laravel
+RUN mkdir -p storage bootstrap/cache \
     && chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache \
     && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-# Copy configs (make sure you have these in your repo under docker/)
-COPY ./docker/nginx.conf /etc/nginx/conf.d/default.conf
-COPY ./docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-
 EXPOSE 80
+
 CMD ["/usr/bin/supervisord"]
