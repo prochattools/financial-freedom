@@ -1,59 +1,38 @@
-# =============================
-# Stage 1: PHP Dependencies
-# =============================
+# Stage 1: Build vendors
 FROM composer:2 AS vendor
 
 WORKDIR /app
 COPY composer.json composer.lock ./
-RUN composer install --no-dev --no-scripts --no-interaction --prefer-dist --ignore-platform-reqs
+RUN composer install --ignore-platform-reqs --no-dev --no-scripts --no-progress --prefer-dist
 COPY . .
-RUN composer install --no-dev --optimize-autoloader --no-interaction --ignore-platform-reqs
+RUN composer dump-autoload --optimize
 
-# =============================
-# Stage 2: Frontend (Vite)
-# =============================
-FROM node:20 AS frontend
+# Stage 2: PHP-FPM + Nginx
+FROM php:8.2-fpm
 
-WORKDIR /app
-COPY package*.json ./
-RUN npm install
-COPY . .
-RUN npm run build || echo "⚠️ Frontend build failed, continuing..."
-
-# =============================
-# Stage 3: Backend (PHP-FPM + Nginx + Supervisor)
-# =============================
-FROM php:8.3-fpm AS backend
-
-# Install dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    git unzip libpq-dev libonig-dev libzip-dev \
-    nginx curl supervisor \
-    && docker-php-ext-install pdo pdo_mysql pdo_pgsql zip \
+    libpng-dev libjpeg-dev libfreetype6-dev zip unzip git curl nginx supervisor \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install gd pdo pdo_mysql bcmath \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# Copy composer from builder
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Copy PHP dependencies and frontend build
-COPY --from=vendor /app /app
-COPY --from=frontend /app/public /app/public
+# Set working directory
+WORKDIR /var/www/html
 
-# Configure PHP-FPM to listen on 127.0.0.1:9000
-RUN echo "listen = 127.0.0.1:9000" > /usr/local/etc/php-fpm.d/zz-docker.conf
+# Copy vendor + app code
+COPY --from=vendor /app /var/www/html
 
-# Copy Nginx + Supervisor configs
-COPY docker/nginx.conf /etc/nginx/nginx.conf
-COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+# Configure Nginx + Supervisor
+COPY .docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY .docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Ensure Laravel storage is writable
-RUN mkdir -p /app/storage/framework/{sessions,views,cache} \
-    && chown -R www-data:www-data /app/storage /app/bootstrap/cache
+# Fix permissions
+RUN mkdir -p /var/www/html/storage /var/www/html/bootstrap/cache \
+    && chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache \
+    && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-# Expose HTTP port
-EXPOSE 80
-
-# Run migrations automatically (optional, safe to remove if handled elsewhere)
-RUN php artisan migrate --force || true
-
-# Start Supervisor (manages Nginx + PHP-FPM)
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
