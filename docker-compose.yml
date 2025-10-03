@@ -10,11 +10,11 @@ services:
     labels:
       - "traefik.enable=true"
 
-      # Router (HTTP only, since Cloudflare handles SSL)
+      # Router (HTTP only, no TLS because Cloudflare tunnel)
       - "traefik.http.routers.financialfreedom.rule=Host(`finance.prochat.tools`)"
       - "traefik.http.routers.financialfreedom.entrypoints=web"
 
-      # Service → app listens on port 80
+      # Service → app listens on port 80 inside the container
       - "traefik.http.services.financialfreedom.loadbalancer.server.port=80"
 
       # Tell Traefik which network to use
