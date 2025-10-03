@@ -3,21 +3,21 @@ version: "3.9"
 services:
   financialfreedom:
     image: finance-financialfreedom-x7vpmh:latest
-    container_name: financialfreedom   # 👈 Force a predictable name
+    container_name: financialfreedom
     restart: unless-stopped
     networks:
       - dokploy-network
     labels:
       - "traefik.enable=true"
 
-      # Route
+      # Router (only HTTP, no TLS since Cloudflare terminates SSL)
       - "traefik.http.routers.financialfreedom.rule=Host(`finance.prochat.tools`)"
       - "traefik.http.routers.financialfreedom.entrypoints=web"
 
-      # Service
+      # Service → container’s nginx port
       - "traefik.http.services.financialfreedom.loadbalancer.server.port=80"
 
-      # Network hint (important if multiple networks)
+      # Important: tell Traefik which network to use
       - "traefik.docker.network=dokploy-network"
 
 networks:
