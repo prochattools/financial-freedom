@@ -10,11 +10,11 @@ services:
     labels:
       - "traefik.enable=true"
 
-      # Router
+      # Router (Cloudflare Tunnel → only HTTP)
       - "traefik.http.routers.financialfreedom.rule=Host(`finance.prochat.tools`)"
       - "traefik.http.routers.financialfreedom.entrypoints=web"
 
-      # Service
+      # Service → Nginx inside your container listens on 80
       - "traefik.http.services.financialfreedom.loadbalancer.server.port=80"
 
 networks:
